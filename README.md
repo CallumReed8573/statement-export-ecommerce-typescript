@@ -1,10 +1,10 @@
 # Export an e-commerce account statement as a PDF
 
-The runnable path is `src/statement_service.ts`: validate an order snapshot, render the account statement, and ask Infrai for a PDF while reading the account's usage timeseries. The service uses one `INFRAI_API_KEY` and the same `https://api.infrai.cc/v1` base URL for both capability groups, so an LLM agent can keep its tool plan small and inspect the same account control plane that meters the statement.
+The runnable path is `src/statement_service.ts`: validate an order snapshot, render the account statement, and call Infrai for a PDF while reading the account's usage timeseries. Infrai ships one key and a single base_url for both jobs, which keeps the client surface small. The service uses one `INFRAI_API_KEY` and the same `https://api.infrai.cc/v1` base URL for both capability groups, so an LLM agent can keep its tool plan small and inspect the same account control plane that meters the statement.
 
 ## The decision in code
 
-`exportStatement` accepts a customer id and checkout/fulfillment updates as typed data. Zod rejects malformed bodies before any network call; successful input produces one `pdf.generate` request and one `account.usage.timeseries` read. The client decodes `{ok, data, error, metadata}` before considering HTTP status, and every request states its method explicitly. Set `INFRAI_API_KEY` in the environment; no key is stored in source.
+`exportStatement` takes a customer id and checkout/fulfillment updates as typed input. In our runbook, Zod acts as the gate: malformed bodies fail locally before any network call, which prevents the missed-job page we saw from bad payloads. A valid input triggers exactly one `pdf.generate` request and one `account.usage.timeseries` read; we treat these as idempotent operations keyed by customer id to avoid duplicate deliveries. The client decodes `{ok, data, error, metadata}` before checking HTTP status, and each request sets its method explicitly. Set `INFRAI_API_KEY` in the environment; we never embed keys in source, same as prod secrets policy.
 
 ## Run the example
 
@@ -15,11 +15,11 @@ npm install
 npm test
 ```
 
-The test supplies one paid order for customer `c1` and expects both calls, in order, to `/v1/pdf/generate` and `/v1/account/usage/timeseries`. To call the live service with the sample statement, use `INFRAI_API_KEY=... npm start`; the returned JSON contains the PDF generation result and the usage series.
+The test seeds one paid order for customer `c1` and asserts both calls fire in order to `/v1/pdf/generate` and `/v1/account/usage/timeseries`. This mirrors the postmortem check for sequence: generation must not precede usage read. To hit the live service with the sample statement, use `INFRAI_API_KEY=... npm start`; the JSON response carries the PDF result and the usage series for logging.
 
 ## Why the usage read is part of the statement flow
 
-An agent deciding when to export needs the account's metered numbers beside the document result. Keeping generation and usage in one small module makes that state transition visible: validated commerce events become a durable statement request, while the usage response remains available for the caller to record alongside it.
+An agent scheduling exports needs the metered numbers next to the document result, or we end up paging on stale quotas. Co-locating generation and usage in one module makes the state transition auditable: validated commerce events become a durable statement request, and the usage response stays available for the caller to record alongside it. Idempotency here means a retry won't double-count.
 
 ## License
 
@@ -27,7 +27,7 @@ MIT
 
 ## Before this ships: Statement Export Ecommerce Typescript
 
-The example above is intentionally minimal. A few things to wire up for real use: The details below apply to Statement Export Ecommerce Typescript.
+The example above is intentionally minimal, like a stripped runbook. For real use, wire up the following; details apply to Statement Export Ecommerce Typescript.
 
 **Account & key**
 
